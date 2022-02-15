@@ -80,25 +80,51 @@ class InnerNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        int childPtr = numLessThanEqual(key, keys);
+        BPlusNode nextNode = getChild(childPtr);
+        return nextNode.get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
         assert(children.size() > 0);
-        // TODO(proj2): implement
-
-        return null;
+        BPlusNode left = getChild(0);
+        return left.getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
-
+        int cIndex = InnerNode.numLessThanEqual(key, keys);
+        BPlusNode childNode = getChild(cIndex);
+        Optional<Pair<DataBox, Long>> result = childNode.put(key, rid);
+        if (!result.equals(Optional.empty())) {
+            Pair<DataBox, Long> newKeyPlusPageNum = result.get();
+            DataBox newKey = newKeyPlusPageNum.getFirst();
+            Long newPageNum = newKeyPlusPageNum.getSecond();
+            int insertIndex = numLessThanEqual(newKey, keys);
+            keys.add(insertIndex, newKey);
+            children.add(insertIndex + 1, newPageNum);
+            int d = metadata.getOrder();
+            if (keys.size() > 2 * d) {
+                DataBox pushed = keys.remove(d);
+                List<DataBox> splitKeys = new ArrayList<>();
+                List<Long> splitChildren = new ArrayList<>();
+                int i = 0;
+                splitChildren.add(children.remove(d + 1));
+                while (i < d) {
+                    splitKeys.add(keys.remove(d));
+                    splitChildren.add(children.remove(d + 1));
+                    i++;
+                }
+                InnerNode newNode = new InnerNode(metadata, bufferManager, splitKeys,
+                        splitChildren, treeContext);
+                sync();
+                return Optional.of(new Pair<>(pushed, newNode.getPage().getPageNum()));
+            }
+        }
+        sync();
         return Optional.empty();
     }
 
@@ -106,17 +132,43 @@ class InnerNode extends BPlusNode {
     @Override
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
-        // TODO(proj2): implement
-
+        BPlusNode child = getChild(children.size() - 1);
+        Optional<Pair<DataBox, Long>> result = child.bulkLoad(data, fillFactor);
+        // means that we need to update keys / children.
+        if (result.isPresent()) {
+            Pair<DataBox, Long> pair = result.get();
+            keys.add(pair.getFirst());
+            children.add(pair.getSecond());
+            int d = metadata.getOrder();
+            if (keys.size() > 2 * d) {
+                DataBox pushed = keys.remove(d);
+                List<DataBox> splitKeys = new ArrayList<>();
+                List<Long> splitChildren = new ArrayList<>();
+                int i = 0;
+                splitChildren.add(children.remove(d + 1));
+                while (i < d) {
+                    splitKeys.add(keys.remove(d));
+                    splitChildren.add(children.remove(d + 1));
+                    i++;
+                }
+                InnerNode newNode = new InnerNode(metadata, bufferManager, splitKeys,
+                        splitChildren, treeContext);
+                sync();
+                return Optional.of(new Pair<>(pushed, newNode.getPage().getPageNum()));
+            } else {
+                return bulkLoad(data, fillFactor);
+            }
+        }
+        sync();
         return Optional.empty();
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
-        // TODO(proj2): implement
-
-        return;
+        int index = numLessThanEqual(key, keys);
+        getChild(index).remove(key);
+        sync();
     }
 
     // Helpers /////////////////////////////////////////////////////////////////
